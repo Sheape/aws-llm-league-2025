@@ -1,26 +1,17 @@
-graph = "nice"
+from langgraph.graph import END, START, StateGraph
 
-from dotenv import load_dotenv
-import sqlite3
+from agent.nodes import OverallState, continue_to_generate, extract_subtopics, generate_question_answer, save_to_db
 
-load_dotenv()
 
-conn = sqlite3.connect('data.db')
-cursor = conn.cursor()
+builder = StateGraph(OverallState)
+builder.add_node("extract_subtopics", extract_subtopics)
+builder.add_node("generate_question_answer", generate_question_answer)
+builder.add_node("save_to_db", save_to_db)
 
-cursor.execute("SELECT * FROM subtopics WHERE done = 0")
-subtopics = cursor.fetchall()
-for subtopic in subtopics:
-    print(f"ID: {subtopic[0]}, Topic: {subtopic[1]}, Subtopic: {subtopic[2]}")
+builder.add_edge(START, "extract_subtopics")
+builder.add_conditional_edges("extract_subtopics", continue_to_generate,
+                              ["generate_question_answer"])
+builder.add_edge("generate_question_answer", "save_to_db")
+builder.add_edge("save_to_db", END)
 
-# with open('questions_answers.csv', 'r') as file:
-#     today = datetime.today()
-#     reader = csv.reader(file)
-#     next(reader)
-#     for row in reader:
-#         cursor.execute("INSERT INTO question_answers (questions, answers, created_at, subtopic_id) VALUES (?, ?, ?, ?)", (row[0], row[1], today.strftime('%m-%d-%Y'), 0))
-
-cursor.close()
-conn.commit()
-conn.close()
-
+graph = builder.compile()
