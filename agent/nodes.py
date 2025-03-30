@@ -1,22 +1,17 @@
-import operator
-from typing import Annotated, Any, Tuple, TypedDict
+from typing import Any, TypedDict
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.utils import convert_to_secret_str
 from langchain_openai import AzureChatOpenAI
-from langgraph.graph import MessagesState
-from langgraph.types import Send
-from langgraph.prebuilt import create_react_agent
-from datetime import datetime
-
-import sqlite3
 import os
+
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-from .tools import TOOLS
-from .prompts import GENERATE_ANSWER_PROMPT, GENERATE_QUESTION_PROMPT
+from agent.prompts import CHECK_RESPONSE_RELEVANCE_PROMPT, CHOOSE_BEST_RESPONSE_PROMPT, GENERATE_ANSWER_PROMPT
+
 
 load_dotenv()
-llm = AzureChatOpenAI(
+fast_llm = AzureChatOpenAI(
     azure_deployment="gpt-4o-mini",
     api_version="2024-08-01-preview",
     temperature=0,
@@ -25,90 +20,100 @@ llm = AzureChatOpenAI(
     seed=69
 )
 
-_reasoning_llm = AzureChatOpenAI(
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT_REASONING"),
-    api_key=convert_to_secret_str(os.environ["AZURE_OPENAI_API_KEY_REASONING"]),
-    azure_deployment="o3-mini",
-    api_version="2024-12-01-preview",
+creative_llm = AzureChatOpenAI(
+    azure_deployment="gpt-4o",
+    api_version="2024-08-01-preview",
+    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT_GPT4O"],
+    api_key=convert_to_secret_str(os.environ["AZURE_OPENAI_GPT4O_API_KEY"]),
+    temperature=0.6,
     max_tokens=None,
     timeout=None,
-    seed=69
 )
 
+# _llama_llm = AzureAIChatCompletionsModel(
+#     model_name="Llama-3.3-70B-Instruct",
+#     temperature=0.2,
+#     max_tokens=None,
+# )
 
-class OverallState(MessagesState):
-    topics_subtopics: list[Tuple[int,str,str]]
-    questions_answers: Annotated[list, operator.add]
-    records: list[Tuple[str, str, str, int]]
-
-class SubtopicState(TypedDict):
-    subtopic_id: int
+### States ###
+class OverallState(TypedDict):
+    question: str
     topic: str
     subtopic: str
+    response1: str
+    response2: str
+    best_response: str
+    is_relevant_accurate: bool
 
-class Question(BaseModel):
-    """Questions that are relevant to the subtopic."""
-    questions: list[str]
+### Models ###
+class GenResponse(BaseModel):
+    """Response/Answer based from the given question"""
+    answer: str
 
-class Answer(BaseModel):
-    """Answers to the questions."""
-    answers: list[str]
+class BestResponse(BaseModel):
+    """Best Response/Answer based from the given question"""
+    best_response: str
 
-reasoning_llm = create_react_agent(model=_reasoning_llm, tools=TOOLS, response_format=Answer)
+class IsRelevantAccurate(BaseModel):
+    """Is the response relevant and accurate from the question?"""
+    is_relevant_accurate: bool
 
-def extract_subtopics(state: OverallState):
-    conn = sqlite3.connect('data.db')
-    cursor = conn.cursor()
+### Nodes ###
+async def generate_response1(state: OverallState):
+    sys_msg = SystemMessage(
+        content=GENERATE_ANSWER_PROMPT.format(
+            topic=state["topic"],
+            subtopic=state["subtopic"],
+        )
+    )
+    human_msg = HumanMessage(content=state["question"])
+    query = [sys_msg] + [human_msg]
+    response: GenResponse | Any = await creative_llm.with_structured_output(GenResponse).ainvoke(query)
+    return {
+        "response1": response.answer
+    }
 
-    cursor.execute("SELECT * FROM subtopics WHERE done = 0;")
-    subtopics = cursor.fetchall()
-    pairs = [(subtopic[0], subtopic[1], subtopic[2]) for subtopic in subtopics]
+async def generate_response2(state: OverallState):
+    sys_msg = SystemMessage(
+        content=GENERATE_ANSWER_PROMPT.format(
+            topic=state["topic"],
+            subtopic=state["subtopic"],
+        )
+    )
+    human_msg = HumanMessage(content=state["question"])
+    query = [sys_msg] + [human_msg]
+    response: GenResponse | Any = await creative_llm.with_structured_output(GenResponse).ainvoke(query)
+    return {
+        "response2": response.answer
+    }
 
-    cursor.close()
-    conn.commit()
-    conn.close()
+async def choose_best_response(state: OverallState):
+    sys_msg = SystemMessage(
+        content=CHOOSE_BEST_RESPONSE_PROMPT.format(
+            topic=state["topic"],
+            subtopic=state["subtopic"],
+            question=state["question"]
+        )
+    )
+    human_msg = HumanMessage(content=f"1. f{state['response1']}\n\n2. f{state['response2']}")
+    query = [sys_msg] + [human_msg]
+    response: BestResponse | Any = await fast_llm.with_structured_output(BestResponse).ainvoke(query)
+    return {
+        "best_response": response.best_response
+    }
 
-    return {"topics_subtopics": pairs}
-
-async def generate_question_answer(state: SubtopicState):
-    prompt = GENERATE_QUESTION_PROMPT.format(topic=state["topic"], subtopic=state["subtopic"])
-    question_response: Question | Any = await llm.with_structured_output(Question).ainvoke(prompt)
-    answer_prompt = GENERATE_ANSWER_PROMPT.format(topic=state["topic"], subtopic=state["subtopic"])
-    print(question_response.questions)
-    answer_response = await reasoning_llm.ainvoke({
-        "messages": [
-            {"role": "system", "content": answer_prompt},
-            {"role": "user", "content": "\n".join(question_response.questions)}
-        ]
-    })
-    print("Answers: ")
-    print(answer_response)
-    return {"questions_answers": [{
-        "subtopic_id": state["subtopic_id"],
-        "questions": question_response.questions,
-        "answers": answer_response["structured_response"].answers,
-    }]}
-
-async def continue_to_generate(state: OverallState):
-    return [Send("generate_question_answer", {"subtopic_id": subtopic_id, "topic": topic, "subtopic": subtopic}) for subtopic_id, topic, subtopic in state["topics_subtopics"]]
-
-def save_to_db(state: OverallState):
-    conn = sqlite3.connect('data.db')
-    cursor = conn.cursor()
-    today = datetime.now().strftime("%m-%d-%Y")
-    pairs = [(question, answer, today, qa["subtopic_id"]) for qa in
-             state["questions_answers"] for question,answer in
-             zip(qa["questions"], qa["answers"])]
-    ids = [(qa["subtopic_id"],) for qa in state["questions_answers"]]
-
-    print("Saving to database...")
-    cursor.executemany("""INSERT INTO question_answers (questions, answers, created_at, subtopic_id)
-    VALUES (?,?,?,?);""", pairs)
-
-    cursor.executemany("""UPDATE subtopics SET done = 1
-    WHERE id = ?;""", ids)
-
-    cursor.close()
-    conn.commit()
-    conn.close()
-    return {"records": pairs}
+async def check_relevance_accuracy(state: OverallState):
+    sys_msg = SystemMessage(
+        content=CHECK_RESPONSE_RELEVANCE_PROMPT.format(
+            topic=state["topic"],
+            subtopic=state["subtopic"],
+            question=state["question"]
+        )
+    )
+    human_msg = HumanMessage(content=f"Response: f{state['best_response']}")
+    query = [sys_msg] + [human_msg]
+    response: IsRelevantAccurate | Any = await fast_llm.with_structured_output(IsRelevantAccurate).ainvoke(query)
+    return {
+        "is_relevant_accurate": response.is_relevant_accurate
+    }
