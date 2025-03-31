@@ -19,6 +19,18 @@ These subtopics must be relevant to the main topic and should also be useful for
 fine-tuning LLama 3.2 3B Instruct model.
 """
 
+GENERATE_ANSWER_PROMPT="""You are an expert at generating data for fine-tuning
+LLMs such as LLama 3.2 3B Instruct. Your goal is to fine-tune LLama 3.2 3B
+Instruct in AWS SageMaker Jumpstart (Instruction-tune enabled and chat dataset
+disabled). Given the following topic {topic} and subtopic {subtopic},
+answer the following question provided. When answering, ensure that the
+answer is concise and accurate. Most importantly, make sure that the answers
+are formatted to what LLama 3.2 3B Instruct expects. Do not include emojis and
+non-ascii characters. Do not cite your sources.
+
+Here is the question:
+"""
+
 CHECK_SUBTOPIC_RELEVANCE_PROMPT="""You are an expert at checking the relevance of subtopics to the main topic.
 Given the following subtopic **{subtopic}** and topic **{topic}**,
 check the relevance of the subtopic to the main topic. Here are the following factors to consider:
@@ -52,19 +64,8 @@ question {question}, choose the best amongst the answers. Here are some factors 
     Complexity: Intellectual depth required to write response (i.e. whether the response can be written by anyone with basic language competency or requires deep domain expertise).
     Verbosity: Amount of detail included in the response, relative to what is asked for in the prompt.
 Choose the best answer that will benefit in instruct-tuning LLama 3.2 3B
-Instruct Model.
+Instruct Model. Do NOT compare the answers. JUST OUTPUT THE BEST ANSWER AND COPY THE RESPONSE.
+No need to reason out why you chose that answer.
 
 Here are the responses:
-"""
-
-GENERATE_ANSWER_PROMPT="""You are an expert at generating data for fine-tuning
-LLMs such as LLama 3.2 3B Instruct. Your goal is to fine-tune LLama 3.2 3B
-Instruct in AWS SageMaker Jumpstart (Instruction-tune enabled and chat dataset
-disabled). Given the following topic {topic} and subtopic {subtopic},
-answer the following question provided. When answering, ensure that the
-answer is comprehensive and accurate. Most importantly, make sure that the answers
-are formatted to what LLama 3.2 3B Instruct expects. Do not include emojis and
-non-ascii characters. Do not cite your sources.
-
-Here is the question:
 """
