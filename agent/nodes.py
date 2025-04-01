@@ -13,7 +13,7 @@ from langgraph.graph import END
 from pydantic import BaseModel
 import sqlite3
 
-from agent.prompts import CHECK_RESPONSE_RELEVANCE_PROMPT, CHOOSE_BEST_RESPONSE_PROMPT, GENERATE_ANSWER_PROMPT, GENERATE_SUBTOPIC_PROMPT, RANK_SUBTOPICS_PROMPT
+from agent.prompts import CHECK_QUESTIONS_RELEVANCE_PROMPT, CHECK_RESPONSE_RELEVANCE_PROMPT, CHOOSE_BEST_QUESTION, CHOOSE_BEST_RESPONSE_PROMPT, GENERATE_ANSWER_PROMPT, GENERATE_QUESTION_PROMPT, GENERATE_SUBTOPIC_PROMPT, RANK_SUBTOPICS_PROMPT
 
 
 load_dotenv()
@@ -43,6 +43,8 @@ class Mode(Enum):
     PROMPT_TESTING_SOME = "prompt_testing_some"
     PROMPT_TESTING_ALL = "prompt_testing_all"
     SUBTOPIC_GENERATION = "subtopic_generation"
+    QUESTION_GENERATION = "question_generation"
+    RESPONSE_GENERATION = "response_generation"
 
 class Topic(Enum):
     PROMPT_ENGINEERING = "Prompt Engineering"
@@ -58,11 +60,13 @@ class MainOverallState(TypedDict):
     mode: Mode
     topic: Topic
     subtopics: list[dict]
+    current_subtopic_index: int
     subtopics_with_ranking: list[Tuple[str, int]]
     subtopic_generation: int
     filename_db: str
     dataset: list[dict]
     best_responses: Annotated[list[dict], operator.add]
+    best_question_set: list[Tuple[int, str]]
     status: str
 
 ###### GenResponse Graph ######
@@ -75,6 +79,16 @@ class OverallState(TypedDict):
     response2: str
     best_response: str
     is_relevant_accurate: bool
+
+###### GenQuestion Graph ######
+class QuestionOverallState(TypedDict):
+    questions1: list[str]
+    questions2: list[str]
+    subtopic_id: int
+    best_set: list[str]
+    is_relevant: bool
+    subtopic: str
+    topic: str
 
 ### Models ###
 ###### GenResponse Graph ######
@@ -108,6 +122,21 @@ class SubtopicsRanking(BaseModel):
     The list should be maximum of 50 elements.
     """
     subtopics: list[SubtopicsRankingSingle]
+
+###### GenQuestion Graph ######
+class QuestionsGenerated(BaseModel):
+    """Questions generated based from the given topic and subtopic
+    The list should be maximum of 50 elements."""
+    questions: list[str]
+
+class BestQuestionSet(BaseModel):
+    """Determines the best set of question.
+    Can either be 1 or 2 which represents which # of set they are."""
+    best_set: int
+
+class QuestionSetRelevance(BaseModel):
+    """Determines if the set of questions is relevant to the topic and subtopic."""
+    is_relevant: bool
 
 ### Nodes ###
 ###### GenResponse Graph ######
@@ -289,12 +318,106 @@ def save_subtopic_to_db(state: MainOverallState):
     conn.commit()
     conn.close()
 
+###### GenQuestions Graph ######
+def retrieve_subtopics(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+    cursor.execute(f"""SELECT id, subtopic FROM subtopics
+    WHERE topic = '{state['topic']}' AND questions_generated = 0;""")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    subtopics = [{"id": row[0], "subtopic": row[1]} for row in rows]
+    return {
+        "subtopics": subtopics,
+        "current_subtopic_index": 0
+    }
+
+async def generate_questions_1(state: QuestionOverallState):
+    sys_msg = SystemMessage(
+        content=GENERATE_QUESTION_PROMPT.format(
+            num_questions=50
+        )
+    )
+    human_msg = HumanMessage(content=f"Topic: {state['topic']}, Subtopic: {state['subtopic']}")
+    query = [sys_msg] + [human_msg]
+    response: QuestionsGenerated | Any = await creative_llm.with_structured_output(QuestionsGenerated).ainvoke(query)
+    return {
+        "questions1": response.questions
+    }
+
+async def generate_questions_2(state: QuestionOverallState):
+    sys_msg = SystemMessage(
+        content=GENERATE_QUESTION_PROMPT.format(
+            num_questions=50
+        )
+    )
+    human_msg = HumanMessage(content=f"Topic: {state['topic']}, Subtopic: {state['subtopic']}")
+    query = [sys_msg] + [human_msg]
+    response: QuestionsGenerated | Any = await creative_llm.with_structured_output(QuestionsGenerated).ainvoke(query)
+    return {
+        "questions2": response.questions
+    }
+
+def convert_list_to_str_formatted(questions: list[str]) -> str:
+    return "\n".join([f"{i+1}. {question}" for i, question in enumerate(questions)])
+
+async def choose_best_questions(state: QuestionOverallState):
+    sys_msg = SystemMessage(
+        content=CHOOSE_BEST_QUESTION.format(
+            topic=state["topic"],
+            subtopic=state["subtopic"],
+        )
+    )
+    human_msg = HumanMessage(content=f"Set 1:\nf{convert_list_to_str_formatted(state['questions1'])}\n\nSet 2: f{convert_list_to_str_formatted(state['questions2'])}")
+    query = [sys_msg] + [human_msg]
+    response: BestQuestionSet | Any = await fast_llm.with_structured_output(BestQuestionSet).ainvoke(query)
+    best_set = state['questions1'] if response.best_set == 1 else state['questions2']
+    return {
+        "best_set": best_set
+    }
+
+async def check_relevance_questions(state: QuestionOverallState):
+    sys_msg = SystemMessage(
+        content=CHECK_QUESTIONS_RELEVANCE_PROMPT.format(
+            topic=state["topic"],
+            subtopic=state["subtopic"],
+        )
+    )
+    human_msg = HumanMessage(content=f"f{convert_list_to_str_formatted(state['best_set'])}")
+    query = [sys_msg] + [human_msg]
+    response: QuestionSetRelevance | Any = await fast_llm.with_structured_output(QuestionSetRelevance).ainvoke(query)
+    return {
+        "is_relevant": response.is_relevant
+    }
+
+def save_questions_to_db(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+    now = datetime.now()
+    current_date_dash = now.strftime("%m-%d-%Y")
+    current_time = now.strftime("%H:%M:%S")
+
+    data = [(f"{current_date_dash}_{current_time}", subtopic_id, question) for subtopic_id, question in state["best_question_set"]]
+    subtopic_id = data[0][1]
+    cursor.executemany("""INSERT INTO questions_answers (created_at, subtopic_id,
+                       question) VALUES (?, ?, ?);""", data)
+    cursor.execute(f"UPDATE subtopics SET questions_generated = 1 WHERE id = {subtopic_id};")
+    cursor.close()
+    conn.commit()
+    conn.close()
+
 ###### Main Graph ######
-def route_input_mode(state: MainInputState) -> Literal["retrieve_base_dataset", "generate_subtopics", END]: # type: ignore
+def route_input_mode(state: MainInputState) -> Literal["retrieve_base_dataset",
+                                                       "generate_subtopics",
+                                                       "retrieve_subtopics", END]: # type: ignore
     if state["mode"] == Mode.PROMPT_TESTING_SOME.value or state["mode"] == Mode.PROMPT_TESTING_ALL.value:
         return "retrieve_base_dataset"
     if state["mode"] == Mode.SUBTOPIC_GENERATION.value:
         return "generate_subtopics"
+    if state["mode"] == Mode.QUESTION_GENERATION.value:
+        return "retrieve_subtopics"
     else:
         return END
 
