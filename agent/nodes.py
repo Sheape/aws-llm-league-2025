@@ -60,6 +60,7 @@ class MainOverallState(TypedDict):
     mode: Mode
     topic: Topic
     subtopics: list[dict]
+    current_subtopic_id: int
     current_subtopic_index: int
     subtopics_with_ranking: list[Tuple[str, int]]
     subtopic_generation: int
@@ -71,6 +72,7 @@ class MainOverallState(TypedDict):
 
 ###### GenResponse Graph ######
 class OverallState(TypedDict):
+    qa_id: int
     question: str
     topic: str
     subtopic: str
@@ -409,17 +411,51 @@ def save_questions_to_db(state: MainOverallState):
     conn.close()
 
 ###### Main Graph ######
-def route_input_mode(state: MainInputState) -> Literal["retrieve_base_dataset",
-                                                       "generate_subtopics",
-                                                       "retrieve_subtopics", END]: # type: ignore
+def route_input_mode(
+    state: MainInputState
+) -> Literal["retrieve_base_dataset", "generate_subtopics", "retrieve_subtopics", "retrieve_next_subtopic", END]: # type: ignore
     if state["mode"] == Mode.PROMPT_TESTING_SOME.value or state["mode"] == Mode.PROMPT_TESTING_ALL.value:
         return "retrieve_base_dataset"
     if state["mode"] == Mode.SUBTOPIC_GENERATION.value:
         return "generate_subtopics"
     if state["mode"] == Mode.QUESTION_GENERATION.value:
         return "retrieve_subtopics"
+    if state["mode"] == Mode.RESPONSE_GENERATION.value:
+        return "retrieve_next_subtopic"
     else:
         return END
+
+def route_gen_answer(state: MainOverallState) -> Literal[END, "retrieve_next_subtopic"]: # type: ignore
+    if state["current_subtopic_id"] == -1:
+        return END
+    else:
+        return "retrieve_next_subtopic"
+
+def retrieve_next_subtopic(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT id FROM subtopics WHERE topic = '{state['topic']}' AND answers_generated = 0;")
+    row = cursor.fetchone()
+    if row:
+        subtopic_id = row[0]
+    else:
+        subtopic_id = -1
+    return { "current_subtopic_id": subtopic_id }
+
+def retrieve_dataset(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+    cursor.execute("""SELECT qa.id, qa.question, s.subtopic, s.id
+        FROM questions_answers qa
+        JOIN subtopics s ON qa.subtopic_id = s.id
+        WHERE s.id = ? AND qa.answer IS NULL;
+        """, (state["current_subtopic_id"],))
+    rows = cursor.fetchall()
+    dataset = [{"qa_id": row[0], "question": row[1], "topic": state["topic"],
+                "subtopic": row[2], "subtopic_id": row[3]} for row in rows]
+    return {
+        "dataset": dataset
+    }
 
 def retrieve_base_dataset(state: MainInputState):
     conn = sqlite3.connect("./db/base_dataset.db")
@@ -441,6 +477,24 @@ def retrieve_base_dataset(state: MainInputState):
             "mode": state["mode"],
             "dataset": dataset
         }
+
+def save_answers_to_db(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+
+    qa_responses = [(qa["response"], qa["qa_id"]) for qa in state["best_responses"]]
+    cursor.executemany("""UPDATE questions_answers SET answer = ?
+    WHERE id = ?;""", qa_responses)
+    cursor.execute(f"UPDATE subtopics SET answers_generated = 1 WHERE id = {state['current_subtopic_id']}")
+
+    cursor.close()
+    conn.commit()
+    conn.close()
+
+    return {
+        "best_responses": [],
+        "status": "save_answers_to_db success!"
+    }
 
 def save_response_to_db(state: MainOverallState):
     now = datetime.now()
