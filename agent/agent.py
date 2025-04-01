@@ -2,7 +2,7 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from agent.nodes import MainInputState, MainOverallState, OverallState, check_relevance_accuracy, choose_best_response, generate_response1, generate_response2, retrieve_base_dataset, route_input_mode, save_as_jsonl, save_response_to_db
+from agent.nodes import MainInputState, MainOverallState, OverallState, check_relevance_accuracy, choose_best_response, continue_subtopic_gen, generate_response1, generate_response2, generate_subtopics, initialize_db, retrieve_base_dataset, route_input_mode, save_as_jsonl, save_response_to_db, save_subtopic_to_db, score_subtopics
 
 def dummy_node(state: OverallState):
     return state
@@ -58,13 +58,21 @@ def continue_gen_response(state: MainOverallState):
 main_builder = StateGraph(MainOverallState, input=MainInputState, output=MainOverallState)
 main_builder.add_node("retrieve_base_dataset", retrieve_base_dataset)
 main_builder.add_node("call_gen_response_subgraph", call_gen_response_subgraph)
+main_builder.add_node("initialize_db", initialize_db)
+main_builder.add_node("save_subtopic_to_db", save_subtopic_to_db)
 main_builder.add_node("save_response_to_db", save_response_to_db)
 main_builder.add_node("save_as_jsonl", save_as_jsonl)
+main_builder.add_node("generate_subtopics", generate_subtopics)
+main_builder.add_node("rank_subtopics", score_subtopics)
 
-main_builder.add_conditional_edges(START, route_input_mode)
+main_builder.add_edge(START, "initialize_db")
+main_builder.add_conditional_edges("initialize_db", route_input_mode)
 main_builder.add_conditional_edges("retrieve_base_dataset", continue_gen_response, ["call_gen_response_subgraph"]) # type: ignore
 main_builder.add_edge("call_gen_response_subgraph", "save_response_to_db")
 main_builder.add_edge("save_response_to_db", "save_as_jsonl")
 main_builder.add_edge("save_as_jsonl", END)
+main_builder.add_edge("generate_subtopics", "rank_subtopics")
+main_builder.add_conditional_edges("rank_subtopics", continue_subtopic_gen)
+main_builder.add_edge("save_subtopic_to_db", END)
 
 graph = main_builder.compile()
