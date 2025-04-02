@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 import operator
 import json
+import csv
 
 from dotenv import load_dotenv
 from langgraph.graph import END
@@ -45,6 +46,8 @@ class Mode(Enum):
     SUBTOPIC_GENERATION = "subtopic_generation"
     QUESTION_GENERATION = "question_generation"
     RESPONSE_GENERATION = "response_generation"
+    OUTPUT_JSONL = "output_jsonl"
+    OUTPUT_CSV = "output_csv"
 
 class Topic(Enum):
     PROMPT_ENGINEERING = "Prompt Engineering"
@@ -413,7 +416,9 @@ def save_questions_to_db(state: MainOverallState):
 ###### Main Graph ######
 def route_input_mode(
     state: MainInputState
-) -> Literal["retrieve_base_dataset", "generate_subtopics", "retrieve_subtopics", "retrieve_next_subtopic", END]: # type: ignore
+) -> Literal["retrieve_base_dataset", "generate_subtopics",
+             "retrieve_subtopics", "retrieve_next_subtopic", "output_to_jsonl",
+             "output_to_csv", END]: # type: ignore
     if state["mode"] == Mode.PROMPT_TESTING_SOME.value or state["mode"] == Mode.PROMPT_TESTING_ALL.value:
         return "retrieve_base_dataset"
     if state["mode"] == Mode.SUBTOPIC_GENERATION.value:
@@ -422,6 +427,10 @@ def route_input_mode(
         return "retrieve_subtopics"
     if state["mode"] == Mode.RESPONSE_GENERATION.value:
         return "retrieve_next_subtopic"
+    if state["mode"] == Mode.OUTPUT_JSONL.value:
+        return "output_to_jsonl"
+    if state["mode"] == Mode.OUTPUT_CSV.value:
+        return "output_to_csv"
     else:
         return END
 
@@ -430,6 +439,54 @@ def route_gen_answer(state: MainOverallState) -> Literal[END, "retrieve_next_sub
         return END
     else:
         return "retrieve_next_subtopic"
+
+def output_to_jsonl(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+    cursor.execute("SELECT question, answer FROM questions_answers")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    now = datetime.now()
+    current_date_dash = now.strftime("%m-%d-%Y")
+    current_time = now.strftime("%H_%M_%S")
+
+    os.makedirs(os.path.dirname(f"./output/{current_date_dash}/"), exist_ok=True)
+    with open(f"./output/{current_date_dash}/{current_date_dash}-{current_time}-train.jsonl", "w") as f:
+        for question, answer in rows:
+            json_line = json.dumps({
+                "instruction": question,
+                "context": "",
+                "response": answer,
+            })
+            f.write(json_line + '\n')
+
+    return { "status": "output_to_jsonl success!" }
+
+def output_to_csv(state: MainOverallState):
+    conn = sqlite3.connect(f"./db/{state['filename_db']}")
+    cursor = conn.cursor()
+    cursor.execute("SELECT question, answer FROM questions_answers")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    header = ["Question", "Answer"]
+    qa_pairs = [[row[0], row[1]] for row in rows]
+    qa_pairs.insert(0, header)
+
+    now = datetime.now()
+    current_date_dash = now.strftime("%m-%d-%Y")
+    current_time = now.strftime("%H_%M_%S")
+
+    filename = f"./output/{current_date_dash}/{current_date_dash}-{current_time}-train.csv"
+    os.makedirs(os.path.dirname(f"./output/{current_date_dash}/"), exist_ok=True)
+    with open(filename, "w", encoding="utf-8", newline="") as f:
+        csvwriter = csv.writer(f)
+        csvwriter.writerows(qa_pairs)
+
+    return { "status": "output_to_csv success!" }
 
 def retrieve_next_subtopic(state: MainOverallState):
     conn = sqlite3.connect(f"./db/{state['filename_db']}")

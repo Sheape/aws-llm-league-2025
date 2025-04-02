@@ -2,7 +2,7 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from agent.nodes import MainInputState, MainOverallState, OverallState, QuestionOverallState, check_relevance_accuracy, check_relevance_questions, choose_best_questions, choose_best_response, continue_subtopic_gen, generate_questions_1, generate_questions_2, generate_response1, generate_response2, generate_subtopics, initialize_db, retrieve_base_dataset, retrieve_dataset, retrieve_next_subtopic, retrieve_subtopics, route_gen_answer, route_input_mode, save_answers_to_db, save_as_jsonl, save_questions_to_db, save_response_to_db, save_subtopic_to_db, score_subtopics
+from agent.nodes import MainInputState, MainOverallState, OverallState, QuestionOverallState, check_relevance_accuracy, check_relevance_questions, choose_best_questions, choose_best_response, continue_subtopic_gen, generate_questions_1, generate_questions_2, generate_response1, generate_response2, generate_subtopics, initialize_db, output_to_csv, output_to_jsonl, retrieve_base_dataset, retrieve_dataset, retrieve_next_subtopic, retrieve_subtopics, route_gen_answer, route_input_mode, save_answers_to_db, save_as_jsonl, save_questions_to_db, save_response_to_db, save_subtopic_to_db, score_subtopics
 
 def dummy_node(state: OverallState):
     return state
@@ -133,6 +133,8 @@ main_builder.add_node("save_subtopic_to_db", save_subtopic_to_db)
 main_builder.add_node("save_questions_to_db", save_questions_to_db)
 main_builder.add_node("save_response_to_db", save_response_to_db)
 main_builder.add_node("save_as_jsonl", save_as_jsonl)
+main_builder.add_node("output_to_jsonl", output_to_jsonl)
+main_builder.add_node("output_to_csv", output_to_csv)
 main_builder.add_node("generate_subtopics", generate_subtopics)
 main_builder.add_node("rank_subtopics", score_subtopics)
 main_builder.add_node("retrieve_subtopics", retrieve_subtopics)
@@ -156,5 +158,7 @@ main_builder.add_edge("retrieve_next_subtopic", "retrieve_dataset")
 main_builder.add_conditional_edges("retrieve_dataset", continue_gen_answers, ["call_gen_answers_subgraph"]) # type: ignore
 main_builder.add_edge("call_gen_answers_subgraph", "save_answers_to_db")
 main_builder.add_conditional_edges("save_answers_to_db", route_gen_answer)
+main_builder.add_edge("output_to_jsonl", END)
+main_builder.add_edge("output_to_csv", END)
 
 graph = main_builder.compile()
