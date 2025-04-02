@@ -125,6 +125,8 @@ answer the following question provided. When answering, ensure that the
 answer is concise and accurate. Most importantly, make sure that the answers
 are formatted to what LLama 3.2 3B Instruct expects. Do not include emojis and
 non-ascii characters. Do not cite your sources. Limit your answer to at most 2 sentences.
+Avoid using "Additionally" or "Moreover" in your answer.
+You can use "They", "These", "This" as the first word after your first sentence.
 
 Here are some examples of Q&A:
     Question: What are the key ethical principles that should guide the development of responsible AI systems?

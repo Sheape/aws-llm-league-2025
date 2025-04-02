@@ -65,7 +65,6 @@ async def call_gen_response_subgraph(state: OverallState):
     })
     return {
         "best_responses": [{
-            "qa_id": state["qa_id"],
             "question": state["question"],
             "response": response["best_response"],
             "subtopic_id": state["subtopic_id"],
@@ -74,7 +73,6 @@ async def call_gen_response_subgraph(state: OverallState):
 
 def continue_gen_response(state: MainOverallState):
     return [Send("call_gen_response_subgraph", {
-        "qa_id": x["qa_id"],
         "question": x["question"],
         "topic": x["topic"],
         "subtopic": x["subtopic"],

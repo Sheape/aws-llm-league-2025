@@ -46,6 +46,7 @@ class Mode(Enum):
     SUBTOPIC_GENERATION = "subtopic_generation"
     QUESTION_GENERATION = "question_generation"
     RESPONSE_GENERATION = "response_generation"
+    RESPONSE_GENERATION_SOME = "response_generation_some"
     OUTPUT_JSONL = "output_jsonl"
     OUTPUT_CSV = "output_csv"
 
@@ -264,7 +265,7 @@ def continue_subtopic_gen(state: MainOverallState) -> Literal["generate_subtopic
 def initialize_db(state: MainOverallState):
     now = datetime.now()
     current_date_dash = now.strftime("%m-%d-%Y")
-    if state["mode"] == Mode.PROMPT_TESTING_SOME or state["mode"] == Mode.PROMPT_TESTING_ALL:
+    if state["mode"] == Mode.PROMPT_TESTING_SOME.value or state["mode"] == Mode.PROMPT_TESTING_ALL.value:
         filename = f"{current_date_dash}-dataset-test.db"
     else:
         filename = f"{current_date_dash}-dataset.db"
@@ -294,7 +295,7 @@ def initialize_db(state: MainOverallState):
     );
     """)
 
-    if state["mode"] == Mode.PROMPT_TESTING_SOME or state["mode"] == Mode.PROMPT_TESTING_ALL:
+    if state["mode"] == Mode.PROMPT_TESTING_SOME.value or state["mode"] == Mode.PROMPT_TESTING_ALL.value:
         conn_base = sqlite3.connect("./db/base_dataset.db")
         cursor_base = conn_base.cursor()
         cursor.execute("SELECT COUNT(*) FROM subtopics;")
@@ -427,6 +428,8 @@ def route_input_mode(
         return "retrieve_subtopics"
     if state["mode"] == Mode.RESPONSE_GENERATION.value:
         return "retrieve_next_subtopic"
+    if state["mode"] == Mode.RESPONSE_GENERATION_SOME.value:
+        return "retrieve_next_subtopic"
     if state["mode"] == Mode.OUTPUT_JSONL.value:
         return "output_to_jsonl"
     if state["mode"] == Mode.OUTPUT_CSV.value:
@@ -443,7 +446,7 @@ def route_gen_answer(state: MainOverallState) -> Literal[END, "retrieve_next_sub
 def output_to_jsonl(state: MainOverallState):
     conn = sqlite3.connect(f"./db/{state['filename_db']}")
     cursor = conn.cursor()
-    cursor.execute("SELECT question, answer FROM questions_answers")
+    cursor.execute("SELECT question, answer FROM questions_answers WHERE answer IS NOT NULL")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -502,11 +505,19 @@ def retrieve_next_subtopic(state: MainOverallState):
 def retrieve_dataset(state: MainOverallState):
     conn = sqlite3.connect(f"./db/{state['filename_db']}")
     cursor = conn.cursor()
-    cursor.execute("""SELECT qa.id, qa.question, s.subtopic, s.id
-        FROM questions_answers qa
-        JOIN subtopics s ON qa.subtopic_id = s.id
-        WHERE s.id = ? AND qa.answer IS NULL;
-        """, (state["current_subtopic_id"],))
+    if state["mode"] == Mode.RESPONSE_GENERATION_SOME.value:
+        cursor.execute("""SELECT qa.id, qa.question, s.subtopic, s.id
+            FROM questions_answers qa
+            JOIN subtopics s ON qa.subtopic_id = s.id
+            WHERE s.id = ? AND qa.answer IS NULL
+            LIMIT 5;
+            """, (state["current_subtopic_id"],))
+    else:
+        cursor.execute("""SELECT qa.id, qa.question, s.subtopic, s.id
+            FROM questions_answers qa
+            JOIN subtopics s ON qa.subtopic_id = s.id
+            WHERE s.id = ? AND qa.answer IS NULL;
+            """, (state["current_subtopic_id"],))
     rows = cursor.fetchall()
     dataset = [{"qa_id": row[0], "question": row[1], "topic": state["topic"],
                 "subtopic": row[2], "subtopic_id": row[3]} for row in rows]
@@ -514,7 +525,7 @@ def retrieve_dataset(state: MainOverallState):
         "dataset": dataset
     }
 
-def retrieve_base_dataset(state: MainInputState):
+def retrieve_base_dataset(state: MainOverallState):
     conn = sqlite3.connect("./db/base_dataset.db")
     cursor = conn.cursor()
     cursor.execute("""SELECT qa.question, qa.answer, s.topic, s.subtopic, s.id FROM questions_answers qa
