@@ -14,7 +14,7 @@ from langgraph.graph import END
 from pydantic import BaseModel
 import sqlite3
 
-from agent.prompts import CHECK_QUESTIONS_RELEVANCE_PROMPT, CHECK_RESPONSE_RELEVANCE_PROMPT, CHOOSE_BEST_QUESTION, CHOOSE_BEST_RESPONSE_PROMPT, GENERATE_ANSWER_PROMPT, GENERATE_QUESTION_PROMPT, GENERATE_SUBTOPIC_PROMPT, RANK_SUBTOPICS_PROMPT
+from agent.prompts import CHECK_QUESTIONS_RELEVANCE_PROMPT, CHECK_RESPONSE_RELEVANCE_PROMPT, CHOOSE_BEST_QUESTION, CHOOSE_BEST_RESPONSE_PROMPT, GENERATE_ANSWER_PROMPT, GENERATE_QUESTION_PROMPT, GENERATE_SUBTOPIC_NEW_PROMPT, GENERATE_SUBTOPIC_PROMPT, RANK_SUBTOPICS_PROMPT
 
 
 load_dotenv()
@@ -44,6 +44,7 @@ class Mode(Enum):
     PROMPT_TESTING_SOME = "prompt_testing_some"
     PROMPT_TESTING_ALL = "prompt_testing_all"
     SUBTOPIC_GENERATION = "subtopic_generation"
+    SUBTOPIC_NEW_GENERATION = "subtopic_new_generation"
     QUESTION_GENERATION = "question_generation"
     RESPONSE_GENERATION = "response_generation"
     RESPONSE_GENERATION_SOME = "response_generation_some"
@@ -182,7 +183,7 @@ async def choose_best_response(state: OverallState):
             question=state["question"]
         )
     )
-    human_msg = HumanMessage(content=f"1. f{state['response1']}\n\n2. f{state['response2']}")
+    human_msg = HumanMessage(content=f"1. {state['response1']}\n\n2. {state['response2']}")
     query = [sys_msg] + [human_msg]
     response: BestResponse | Any = await fast_llm.with_structured_output(BestResponse).ainvoke(query)
     return {
@@ -197,7 +198,7 @@ async def check_relevance_accuracy(state: OverallState):
             question=state["question"]
         )
     )
-    human_msg = HumanMessage(content=f"Response: f{state['best_response']}")
+    human_msg = HumanMessage(content=f"Response: {state['best_response']}")
     query = [sys_msg] + [human_msg]
     response: IsRelevantAccurate | Any = await fast_llm.with_structured_output(IsRelevantAccurate).ainvoke(query)
     return {
@@ -205,12 +206,29 @@ async def check_relevance_accuracy(state: OverallState):
     }
 
 ###### GenSubtopics Graph ######
-async def generate_subtopics(state: MainInputState):
-    sys_msg = SystemMessage(
-        content=GENERATE_SUBTOPIC_PROMPT.format(
-            num_subtopics=50
+async def generate_subtopics(state: MainOverallState):
+    if state["mode"] == Mode.SUBTOPIC_GENERATION.value:
+        sys_msg = SystemMessage(
+            content=GENERATE_SUBTOPIC_PROMPT.format(
+                num_subtopics=50
+            )
         )
-    )
+    else:
+        conn = sqlite3.connect(f"./db/{state['filename_db']}")
+        cursor = conn.cursor()
+        cursor.execute("SELECT subtopic FROM subtopics WHERE topic = ?;", (state["topic"],))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        subtopics = [row[0] for row in rows]
+        subtopics_str = "\n".join([f"- {subtopic}" for subtopic in subtopics])
+        sys_msg = SystemMessage(
+            content=GENERATE_SUBTOPIC_NEW_PROMPT.format(
+                num_subtopics=50,
+                subtopics=subtopics_str
+            )
+        )
+
     human_msg = HumanMessage(content=f"{state['topic']}")
     query = [sys_msg] + [human_msg]
     response: Subtopics | Any = await creative_llm.with_structured_output(Subtopics).ainvoke(query)
@@ -376,7 +394,7 @@ async def choose_best_questions(state: QuestionOverallState):
             subtopic=state["subtopic"],
         )
     )
-    human_msg = HumanMessage(content=f"Set 1:\nf{convert_list_to_str_formatted(state['questions1'])}\n\nSet 2: f{convert_list_to_str_formatted(state['questions2'])}")
+    human_msg = HumanMessage(content=f"Set 1:\n{convert_list_to_str_formatted(state['questions1'])}\n\nSet 2: {convert_list_to_str_formatted(state['questions2'])}")
     query = [sys_msg] + [human_msg]
     response: BestQuestionSet | Any = await fast_llm.with_structured_output(BestQuestionSet).ainvoke(query)
     best_set = state['questions1'] if response.best_set == 1 else state['questions2']
@@ -391,7 +409,7 @@ async def check_relevance_questions(state: QuestionOverallState):
             subtopic=state["subtopic"],
         )
     )
-    human_msg = HumanMessage(content=f"f{convert_list_to_str_formatted(state['best_set'])}")
+    human_msg = HumanMessage(content=f"{convert_list_to_str_formatted(state['best_set'])}")
     query = [sys_msg] + [human_msg]
     response: QuestionSetRelevance | Any = await fast_llm.with_structured_output(QuestionSetRelevance).ainvoke(query)
     return {
@@ -423,6 +441,8 @@ def route_input_mode(
     if state["mode"] == Mode.PROMPT_TESTING_SOME.value or state["mode"] == Mode.PROMPT_TESTING_ALL.value:
         return "retrieve_base_dataset"
     if state["mode"] == Mode.SUBTOPIC_GENERATION.value:
+        return "generate_subtopics"
+    if state["mode"] == Mode.SUBTOPIC_NEW_GENERATION.value:
         return "generate_subtopics"
     if state["mode"] == Mode.QUESTION_GENERATION.value:
         return "retrieve_subtopics"
@@ -470,7 +490,7 @@ def output_to_jsonl(state: MainOverallState):
 def output_to_csv(state: MainOverallState):
     conn = sqlite3.connect(f"./db/{state['filename_db']}")
     cursor = conn.cursor()
-    cursor.execute("SELECT question, answer FROM questions_answers")
+    cursor.execute("SELECT question, answer FROM questions_answers WHERE answer IS NOT NULL")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()

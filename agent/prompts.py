@@ -117,6 +117,69 @@ fine-tuning LLama 3.2 3B Instruct model.
 Generate {num_subtopics} subtopics for the following topic:
 """
 
+GENERATE_SUBTOPIC_NEW_PROMPT="""You are an expert at generating subtopics of a given
+topic. These subtopics should be as simple as one to 5 words and they should all
+be related to AI.
+Here are some examples to guide you through:
+    Topic: Responsible AI | Subtopic: Ethical Principles
+    Topic: Responsible AI | Subtopic: Identifying & Mitigating Bias
+    Topic: Responsible AI | Subtopic: Transparency Role
+    Topic: Responsible AI | Subtopic: AI Accountability
+    Topic: Responsible AI | Subtopic: Privacy Protection
+    Topic: Responsible AI | Subtopic: Human-Centered AI
+    Topic: Responsible AI | Subtopic: AI Governance Frameworks
+    Topic: Responsible AI | Subtopic: Inclusivity & Accessibility
+    Topic: Responsible AI | Subtopic: Risk & Failure Management
+    Topic: Responsible AI | Subtopic: Stakeholder Engagement
+    Topic: Agentic AI | Subtopic: Definition & Autonomy
+    Topic: Agentic AI | Subtopic: Reward Functions
+    Topic: Agentic AI | Subtopic: Goal-Directed Behavior
+    Topic: Agentic AI | Subtopic: Ethical Challenges
+    Topic: Agentic AI | Subtopic: Emergent Behavior
+    Topic: Agentic AI | Subtopic: Multi-Agent Systems
+    Topic: Agentic AI | Subtopic: Uncertainty in Decisions
+    Topic: Agentic AI | Subtopic: Bounded Rationality
+    Topic: Agentic AI | Subtopic: Environmental Learning
+    Topic: Agentic AI | Subtopic: Decision-Making Framework
+    Topic: Agentic AI | Subtopic: Social Awareness
+    Topic: Agentic AI | Subtopic: Memory Role
+    Topic: Agentic AI | Subtopic: Scalable Autonomy
+    Topic: Prompt Engineering | Subtopic: Definition & Importance
+    Topic: Prompt Engineering | Subtopic: Few-Shot Prompting
+    Topic: Prompt Engineering | Subtopic: Temperature Setting
+    Topic: Prompt Engineering | Subtopic: Chain-of-Thought Prompting
+    Topic: Prompt Engineering | Subtopic: Effective Prompt Elements
+    Topic: Prompt Engineering | Subtopic: Zero-Shot Prompting
+    Topic: Prompt Engineering | Subtopic: Role Prompting
+    Topic: Prompt Engineering | Subtopic: Context Length
+    Topic: Prompt Engineering | Subtopic: Prompt Templates
+    Topic: Prompt Engineering | Subtopic: Testing & Iteration
+    Topic: Prompt Engineering | Subtopic: Explicit vs Implicit
+    Topic: Prompt Engineering | Subtopic: Prompt Chaining
+    Topic: Prompt Engineering | Subtopic: Common Pitfalls
+    Topic: Foundational Models | Subtopic: Definition & Comparison
+    Topic: Foundational Models | Subtopic: Transfer Learning
+    Topic: Foundational Models | Subtopic: Self-Supervision
+    Topic: Foundational Models | Subtopic: Data Efficiency
+    Topic: Foundational Models | Subtopic: Architecture Components
+    Topic: Foundational Models | Subtopic: Emergent Abilities
+    Topic: Foundational Models | Subtopic: Deployment Challenges
+    Topic: Foundational Models | Subtopic: Multi-modal Inputs
+    Topic: Foundational Models | Subtopic: Ethical Considerations
+    Topic: Foundational Models | Subtopic: Zero/Few-Shot Learning
+    Topic: Foundational Models | Subtopic: Scaling Impact
+    Topic: Foundational Models | Subtopic: Contextual Understanding
+    Topic: Foundational Models | Subtopic: Open vs Closed Models
+    Topic: Foundational Models | Subtopic: Chain-of-Thought Reasoning
+
+Do not include the subtopics that are already in the list:
+{subtopics}
+
+These subtopics must be relevant to the main topic and should also be useful for
+fine-tuning LLama 3.2 3B Instruct model.
+Generate {num_subtopics} subtopics for the following topic:
+"""
+
 GENERATE_ANSWER_PROMPT="""You are an expert at generating data for fine-tuning
 LLMs such as LLama 3.2 3B Instruct. Your goal is to fine-tune LLama 3.2 3B
 Instruct in AWS SageMaker Jumpstart (Instruction-tune enabled and chat dataset
@@ -124,9 +187,8 @@ disabled). Given the following topic {topic} and subtopic {subtopic},
 answer the following question provided. When answering, ensure that the
 answer is concise and accurate. Most importantly, make sure that the answers
 are formatted to what LLama 3.2 3B Instruct expects. Do not include emojis and
-non-ascii characters. Do not cite your sources. Limit your answer to at most 2 sentences.
-Avoid using "Additionally" or "Moreover" in your answer.
-You can use "They", "These", "This" as the first word after your first sentence.
+non-ascii characters. Do not cite your sources.
+When asked to list items, separate them with a comma and a space.
 
 Here are some examples of Q&A:
     Question: What are the key ethical principles that should guide the development of responsible AI systems?
@@ -160,7 +222,7 @@ Here is the question:
 RANK_SUBTOPICS_PROMPT="""You are an expert at scoring the subtopic from its topic.
 This is the scoring criteria for determining the best subtopics:
     * Relevance:
-    How closely related is the subtopic to the main topic ("Foundational Models")?
+    How closely related is the subtopic to the main topic ("{topic}")?
     Score: 1 (low relevance) to 5 (high relevance).
 
     * Usefulness for Fine-Tuning:
